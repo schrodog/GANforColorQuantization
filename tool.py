@@ -338,7 +338,7 @@ def create_model(inputs, targets):
             'conv4_1', 'relu4_1', 'conv4_2', 'relu4_2', 'conv4_3',
             'relu4_3', 'conv4_4', 'relu4_4', 'pool4',
             'conv5_1', 'relu5_1', 'conv5_2', 'relu5_2', 'conv5_3',
-            'relu5_3', 'conv5_4', 'relu5_4'
+            'relu5_3', 'conv5_4', 'relu5_4', 'pool5'
         )
         def preprocess(self, image):
             return image-self.mean_pixel
@@ -370,7 +370,12 @@ def create_model(inputs, targets):
 
             assert len(net) == len(self.layers)
             return net
-
+        
+        # FC layer
+        with tf.variable_scope("FC"):
+            fc6 = fc_layer(dn_layer[-1])
+            
+            
         # # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
         # input = tf.concat([discrim_inputs, discrim_targets], axis=3)
         #
