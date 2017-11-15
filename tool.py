@@ -99,7 +99,7 @@ def deconv(batch_input, out_channels=256, stride=2, filter_size=4):
 #         # leak: a*x/2 - a*abs(x)/2, linear: x/2 + abs(x)/2
 #         x = tf.identity(x)
 #         return (0.5 * (1 + a)) * x + (0.5 * (1 - a)) * tf.abs(x)
-        
+
 def relu(x):
     with tf.name_scope("relu"):
         return tf.nn.relu(x)
@@ -280,7 +280,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
         rect2 = relu(conv2)
         output = batchnorm(rect2)
         layers.append(output)
-        
+
     with tf.variable_scope("encoder_2"):
         conv1 = conv(layers[-1], 128)
         rect1 = relu(conv1)
@@ -288,7 +288,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
         rect2 = relu(conv2)
         output = batchnorm(rect2)
         layers.append(output)
-        
+
     with tf.variable_scope("encoder_3"):
         conv1 = conv(layers[-1], 256)
         rect1 = relu(conv1)
@@ -298,7 +298,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
         rect3 = relu(conv3)
         output = batchnorm(rect3)
         layers.append(output)
-        
+
     for out_channels in layer_specs:
         with tf.variable_scope("encoder_%d" % (len(layers) + 3)):
             conv1 = conv(layers[-1], out_channels)
@@ -324,7 +324,6 @@ def create_generator(generator_inputs, generator_outputs_channels):
 ###
 def create_model(inputs, targets):
     def create_discriminator(discrim_inputs, discrim_targets):
-<<<<<<< HEAD
 
         def __init__(self, data_path):
             data = scipy.io.loadmat(data_path)
@@ -399,38 +398,6 @@ def create_model(inputs, targets):
         #     output = tf.sigmoid(convolved)
         #     layers.append(output)
         # return layers[-1]
-=======
-        n_layers = 3
-        layers = []
-
-        # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
-        input = tf.concat([discrim_inputs, discrim_targets], axis=3)
-
-        # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
-        with tf.variable_scope("layer_1"):
-            convolved = conv(input, a.ndf, stride=2)
-            rectified = relu(convolved, 0.2)
-            layers.append(rectified)
-
-        # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
-        # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
-        # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-        for i in range(n_layers):
-            with tf.variable_scope("layer_%d" % (len(layers) + 1)):
-                out_channels = a.ndf * min(2**(i+1), 8)
-                stride = 1 if i == n_layers - 1 else 2  # last layer here has stride 1
-                convolved = conv(layers[-1], out_channels, stride=stride)
-                normalized = batchnorm(convolved)
-                rectified = relu(normalized, 0.2)
-                layers.append(rectified)
-
-        # layer_5: [batch, 31, 31, ndf * 8] => [batch, 30, 30, 1]
-        with tf.variable_scope("layer_%d" % (len(layers) + 1)):
-            convolved = conv(rectified, out_channels=1, stride=1)
-            output = tf.sigmoid(convolved)
-            layers.append(output)
-        return layers[-1]
->>>>>>> d091912f54362e67e7e51618caabd58ea1576448
 
 
     with tf.variable_scope("generator") as scope:
