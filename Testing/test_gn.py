@@ -11,7 +11,10 @@ import collections
 import math
 import time
 import json
+import skimage.color as color
 import glob
+import scipy.ndimage.interpolation as sni
+import matplotlib.pyplot as plt
 
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 
@@ -28,25 +31,32 @@ def preprocess_lab(lab):
     with tf.name_scope("preprocess_lab"):
         L_chan, a_chan, b_chan = tf.unstack(lab, axis=2)
         # L_chan: black and white with input range [0, 100], a_chan/b_chan: color channels with input range ~[-110, 110], not exact => all to [-1,1] range
-        return [L_chan / 50 - 1, a_chan / 110, b_chan / 110]
+        # return [L_chan / 50 - 1, a_chan / 110, b_chan / 110]
+        return L_chan, a_chan, b_chan
 
 def deprocess_lab(L_chan, a_chan, b_chan):
-    with tf.name_scope("deprocess_lab"):
+    # with tf.name_scope("deprocess_lab"):
         # this is axis=3 instead of axis=2 because we process individual images but deprocess batches
-        return tf.stack([(L_chan + 1) / 2 * 100, a_chan * 110, b_chan * 110], axis=3)
+        # return tf.stack([(L_chan + 1) / 2 * 100, a_chan * 110, b_chan * 110], axis=3)
+    # print((L_chan + 1) / 2 * 100)
+    return np.stack( (((L_chan + 1) / 2 * 100), (a_chan * 110), (b_chan * 110)) )
 
 def augment(image, brightness):
     # (a, b) color channels, combine with L channel and convert to rgb
-    a_chan, b_chan = tf.unstack(image, axis=3)
-    L_chan = tf.squeeze(brightness, axis=3)
+    # a_chan, b_chan = tf.unstack(image, axis=2)
+    a_chan, b_chan = [image[0,:,:], image[1,:,:]]
+    # L_chan = tf.squeeze(brightness, axis=3)
+    L_chan = brightness
     lab = deprocess_lab(L_chan, a_chan, b_chan)
-    rgb = lab_to_rgb(lab)
+    # rgb = lab_to_rgb(lab)
+    # print(lab)
+    rgb = color.lab2rgb(lab)
     return rgb
-    
+
 def rgb_to_lab(srgb):
     with tf.name_scope("rgb_to_lab"):
         # srgb = check_image(srgb)
-        
+
         srgb_pixels = tf.reshape(srgb, [-1, 3])
 
         with tf.name_scope("srgb_to_xyz"):
@@ -81,47 +91,47 @@ def rgb_to_lab(srgb):
         # print(tf.Session().run(tf.reshape(lab_pixels, tf.shape(srgb))).shape)
         # print((tf.reshape(lab_pixels, tf.shape(srgb))).get_shape())
         # print(lab_pixels.get_shape())
-        
+
         return tf.reshape(lab_pixels, tf.shape(srgb))
 
 
-def lab_to_rgb(lab):
-    with tf.name_scope("lab_to_rgb"):
-        lab = check_image(lab)
-        lab_pixels = tf.reshape(lab, [-1, 3])
-        with tf.name_scope("cielab_to_xyz"):
-            # convert to fxfyfz
-            lab_to_fxfyfz = tf.constant([
-                #   fx      fy        fz
-                [1/116.0, 1/116.0,  1/116.0], # l
-                [1/500.0,     0.0,      0.0], # a
-                [    0.0,     0.0, -1/200.0], # b
-            ])
-            fxfyfz_pixels = tf.matmul(lab_pixels + tf.constant([16.0, 0.0, 0.0]), lab_to_fxfyfz)
-
-            # convert to xyz
-            epsilon = 6/29
-            linear_mask = tf.cast(fxfyfz_pixels <= epsilon, dtype=tf.float32)
-            exponential_mask = tf.cast(fxfyfz_pixels > epsilon, dtype=tf.float32)
-            xyz_pixels = (3 * epsilon**2 * (fxfyfz_pixels - 4/29)) * linear_mask + (fxfyfz_pixels ** 3) * exponential_mask
-            # denormalize for D65 white point
-            xyz_pixels = tf.multiply(xyz_pixels, [0.950456, 1.0, 1.088754])
-
-        with tf.name_scope("xyz_to_srgb"):
-            xyz_to_rgb = tf.constant([
-                #     r           g          b
-                [ 3.2404542, -0.9692660,  0.0556434], # x
-                [-1.5371385,  1.8760108, -0.2040259], # y
-                [-0.4985314,  0.0415560,  1.0572252], # z
-            ])
-            rgb_pixels = tf.matmul(xyz_pixels, xyz_to_rgb)
-            # avoid a slightly negative number messing up the conversion
-            rgb_pixels = tf.clip_by_value(rgb_pixels, 0.0, 1.0)
-            linear_mask = tf.cast(rgb_pixels <= 0.0031308, dtype=tf.float32)
-            exponential_mask = tf.cast(rgb_pixels > 0.0031308, dtype=tf.float32)
-            srgb_pixels = (rgb_pixels * 12.92 * linear_mask) + ((rgb_pixels ** (1/2.4) * 1.055) - 0.055) * exponential_mask
-
-        return tf.reshape(srgb_pixels, tf.shape(lab))
+# def lab_to_rgb(lab):
+#     with tf.name_scope("lab_to_rgb"):
+#         # lab = check_image(lab)
+#         lab_pixels = tf.reshape(lab, [-1, 3])
+#         with tf.name_scope("cielab_to_xyz"):
+#             # convert to fxfyfz
+#             lab_to_fxfyfz = tf.constant([
+#                 #   fx      fy        fz
+#                 [1/116.0, 1/116.0,  1/116.0], # l
+#                 [1/500.0,     0.0,      0.0], # a
+#                 [    0.0,     0.0, -1/200.0], # b
+#             ])
+#             fxfyfz_pixels = tf.matmul(lab_pixels + tf.constant([16.0, 0.0, 0.0]), lab_to_fxfyfz)
+#
+#             # convert to xyz
+#             epsilon = 6/29
+#             linear_mask = tf.cast(fxfyfz_pixels <= epsilon, dtype=tf.float32)
+#             exponential_mask = tf.cast(fxfyfz_pixels > epsilon, dtype=tf.float32)
+#             xyz_pixels = (3 * epsilon**2 * (fxfyfz_pixels - 4/29)) * linear_mask + (fxfyfz_pixels ** 3) * exponential_mask
+#             # denormalize for D65 white point
+#             xyz_pixels = tf.multiply(xyz_pixels, [0.950456, 1.0, 1.088754])
+#
+#         with tf.name_scope("xyz_to_srgb"):
+#             xyz_to_rgb = tf.constant([
+#                 #     r           g          b
+#                 [ 3.2404542, -0.9692660,  0.0556434], # x
+#                 [-1.5371385,  1.8760108, -0.2040259], # y
+#                 [-0.4985314,  0.0415560,  1.0572252], # z
+#             ])
+#             rgb_pixels = tf.matmul(xyz_pixels, xyz_to_rgb)
+#             # avoid a slightly negative number messing up the conversion
+#             rgb_pixels = tf.clip_by_value(rgb_pixels, 0.0, 1.0)
+#             linear_mask = tf.cast(rgb_pixels <= 0.0031308, dtype=tf.float32)
+#             exponential_mask = tf.cast(rgb_pixels > 0.0031308, dtype=tf.float32)
+#             srgb_pixels = (rgb_pixels * 12.92 * linear_mask) + ((rgb_pixels ** (1/2.4) * 1.055) - 0.055) * exponential_mask
+#
+#         return tf.reshape(srgb_pixels, tf.shape(lab))
 ###
 
 def conv_init_vars(net, out_channels, filter_size, transpose=False):
@@ -137,7 +147,7 @@ def conv_init_vars(net, out_channels, filter_size, transpose=False):
 
     # weights shape = [Kernal size, kernal size, output kernal, input kernal]
 
-    weights_init = tf.Variable(tf.truncated_normal(weights_shape, stddev = 0.1, seed=1), dtype=tf.float32)
+    weights_init = tf.Variable(tf.truncated_normal(weights_shape, stddev = 0.1, seed=1), dtype=tf.float32, name='weights_init')
     return weights_init
 
 
@@ -151,8 +161,8 @@ def batch_norm(net, train=True):
     batch, rows, cols, channels = [i.value for i in net.get_shape()] ### Shape Meaning: [batchsize, height, width, kernels]
     var_shape = [channels]
     mu, sigma_sq = tf.nn.moments(net, [1,2], keep_dims=True) ### Calculate the mean and variance of x.Output: One-dimension
-    shift = tf.Variable(tf.zeros(var_shape)) ### Inverse Norm
-    scale = tf.Variable(tf.ones(var_shape)) ### Inverse Norm
+    shift = tf.Variable(tf.zeros(var_shape), name='shift') ### Inverse Norm
+    scale = tf.Variable(tf.ones(var_shape), name='scale') ### Inverse Norm
     epsilon = 1e-3
     normalized = (net-mu)/(sigma_sq + epsilon)**(.5)
     return scale * normalized + shift ### Applied Batch Normalization
@@ -265,8 +275,9 @@ def net(image):  ### 输入的图像不用normalization
     conv8_1_relu = conv_tranpose_layer(conv7_3norm, 256, 4, 2)
     conv8_2_relu = conv_layer(conv8_1_relu, 256, 3, 1, relu=True)
     conv8_3_relu = conv_layer(conv8_2_relu, 256, 3, 1, relu=True)
+    conv8_313_relu = conv_layer_dila(conv8_3_relu, 313, 1, 1, relu=True)
 
-    return conv8_3_relu
+    return conv8_313_relu
 
 def ab2lab(image):
     # scale by 2.606: reheat the output distribution
@@ -277,55 +288,48 @@ def ab2lab(image):
 
     # populate cluster centers as 1x1 convolution kernel
     quantized_ab = np.load('../resources/pts_in_hull.npy') # load cluster centers
-    filter_8_313 = tf.Variable(np.transpose(quantized_ab, [1,0]), dtype=tf.float32)
+    filter_8_313 = tf.Variable(np.transpose(quantized_ab, [1,0]), dtype=tf.float32, name='filter_8_313')
     filter_8_313 = tf.reshape(filter_8_313, [1, 1, 313, 2])
     class8_ab = tf.nn.conv2d(class8_313_rh, filter_8_313, strides=[1,1,1,1], padding='VALID')
-    
-
-def save_images(fetches, step=None):
-    image_dir = os.path.join(a.output_dir, "images")
-    if not os.path.exists(image_dir):
-        os.makedirs(image_dir)
-    filesets = []
-    for i, in_path in enumerate(fetches["paths"]):
-        name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
-        fileset = {"name": name, "step": step}
-        for kind in ["inputs", "outputs", "targets"]:
-            filename = name + "-" + kind + ".png"
-            if step is not None:
-                filename = "%08d-%s" % (step, filename)
-            fileset[kind] = filename
-            out_path = os.path.join(image_dir, filename)
-            contents = fetches[kind][i]
-            with open(out_path, "wb") as f:
-                f.write(contents)
-        filesets.append(fileset)
-    return filesets # return {name, step} list
+    return class8_ab
 
 def main():
     # CROP_SIZE = 256
-    sess = tf.InteractiveSession()
     def convert(image, crop_size):
         return tf.image.resize_images(image, size=tf.constant([crop_size, crop_size]), method=tf.image.ResizeMethod.BICUBIC)
-        
-    # list_images = glob.glob(os.path.join('./imgs', '*.JPEG'))
-    image = tf.image.decode_jpeg(tf.read_file('../imgs/ILSVRC2012_val_00041580.JPEG'))
-    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-    image.set_shape([380,500,3])
-    # print(image.get_shape())
-    lab = rgb_to_lab(image)
-    # print(tf.shape(lab))
-    L_ch, a_ch, b_ch = preprocess_lab(lab)
-    
-    a_images = tf.expand_dims(L_ch, axis=2)
-    b_images = tf.stack([a_ch, b_ch], axis=2)
-    inputs, targets = [convert(a_images,256) , convert(b_images,256) ]
-    
-    # start network
-    outputs = ab2lab(net(inputs))
-    output2 = np.transpose( (sess.run(outputs))[0,:,:,:], [2,0,1])
-    rgb_image = augment(convert(output2, 224), convert(a_images, 224))
-    
-    plt.imshow()
+
+    with tf.Session() as sess:
+        # list_images = glob.glob(os.path.join('./imgs', '*.JPEG'))
+        image = tf.image.decode_jpeg(tf.read_file('../imgs/ILSVRC2012_val_00041580.JPEG'))
+        image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        image.set_shape([380,500,3])
+        # print(image.get_shape())
+        # lab = rgb_to_lab(image)
+        lab = color.rgb2lab(sess.run(image))
+        # print(tf.shape(lab))
+        L_ch, a_ch, b_ch = preprocess_lab(lab)
+
+        a_images = tf.expand_dims(L_ch, axis=2) # expanded L channel
+        b_images = tf.stack([a_ch, b_ch], axis=2)
+        inputs, targets = [convert(a_images,256) , convert(b_images,256) ]
+        inputs = tf.expand_dims(inputs, axis=0)
+        # print(inputs.get_shape())
+
+        # start network
+        output1 = net(inputs)
+        outputs = ab2lab(output1)
+        # run initilalizer after all variables in the graph (for outputs)
+        sess.run(tf.global_variables_initializer())
+        output2 = np.transpose( (sess.run(outputs))[0,:,:,:], (2,0,1))
+        a_ch , b_ch = [output2[0,:,:], output2[1,:,:]]
+        a_ch_res = sni.zoom(a_ch, (1.*224/64, 1.*224/64))[:,:,np.newaxis]
+        b_ch_res = sni.zoom(b_ch, (1.*224/64, 1.*224/64))[:,:,np.newaxis]
+        l_ch_res = sni.zoom(sess.run(L_ch), (1.*224/380, 1.*224/500))[:,:,np.newaxis]
+        abl = np.concatenate((a_ch_res, b_ch_res, l_ch_res),axis=2)
+        print(abl)
+        rgb_image = color.lab2rgb(abl)
+
+    plt.imshow(rgb_image)
+    plt.show()
 
 main()
