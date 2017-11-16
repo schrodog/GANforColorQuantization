@@ -376,90 +376,98 @@ def ab2lab(image):
     # convert softmax to probab distribution
     class8_313_rh = tf.nn.softmax(conv8_313_rh)
 
-    # 
+    # populate cluster centers as 1x1 convolution kernel
+    quantized_ab = np.load('./resources/pts_in_hull.npy') # load cluster centers
+	filter_8_313 = tf.Variable(np.transpose(quantized, [1,0]), dtype='float32')
+    filter_8_313 = tf.reshape(filter_8_313, [1, 1, 313, 2])
+    class8_ab = tf.nn.conv2d(class8_313_rh, filter_8_313, strides=[1,1,1,1], padding='VALID')
+    
 
 ###
 def create_model(inputs, targets):
-    def create_discriminator(discrim_inputs, discrim_targets):
+    '''
+    VGG16 :
+    > conv1_1 > relu1_1 > conv1_2 > relu1_2 > pool1
+    ===
+    > conv2_1 > relu2_1 > conv2_2 > relu2_2 > pool2
+    ===
+    > conv3_1 > relu3_1 > conv3_2 > relu3_2 > conv3_3 > relu3_3 > pool3
+    ===
+    > conv4_1 > relu4_1 > conv4_2 > relu4_2 > conv4_3 > relu4_3 > pool4
+    ===
+    > conv5_1 > relu5_1 > conv5_2 > relu5_2 > conv5_3 > relu5_3 > pool5
+    ===
+    > FC-4096 > FC-4096 > FC-100 > soft-max
+    '''
 
-        def __init__(self, data_path):
-            data = scipy.io.loadmat(data_path)
-            self.mean_pixel = np.array([123.68, 116.779, 103.939])
-            self.weights = data['layers'][0]
+    def discriminator(input1, input2):
+    	# 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
+    	input=tf.concat([input1,input2],axis=3)
 
-        layers = (
-            'conv1_1', 'relu1_1', 'conv1_2', 'relu1_2', 'pool1',
-            'conv2_1', 'relu2_1', 'conv2_2', 'relu2_2', 'pool2',
-            'conv3_1', 'relu3_1', 'conv3_2', 'relu3_2', 'conv3_3',
-            'relu3_3', 'conv3_4', 'relu3_4', 'pool3',
-            'conv4_1', 'relu4_1', 'conv4_2', 'relu4_2', 'conv4_3',
-            'relu4_3', 'conv4_4', 'relu4_4', 'pool4',
-            'conv5_1', 'relu5_1', 'conv5_2', 'relu5_2', 'conv5_3',
-            'relu5_3', 'conv5_4', 'relu5_4', 'pool5'
-        )
-        def preprocess(self, image):
-            return image-self.mean_pixel
-        def undo_preprocess(self,image):
-            return image+self.mean_pixel
+        # block1 : [batch, 256, 256, 6] => [batch, 128, 128, 64]  
+        conv1_1_relu=conv(input,64)
+        conv1_2_relu=conv(conv1_1_relu,64)
+        pool1=pool(conv1_2_relu)
+        	
+        # block2 : [batch, 128, 128, 64] => [batch, 64, 64, 128]  
+        conv2_1_relu=conv(pool1,128)
+        conv2_2_relu=conv(conv2_1_relu,128)
+    	pool2=pool(conv2_2_relu)
 
-        def _pool_layer(input):
-            return tf.nn.max_pool(input, ksize=(1, 2, 2, 1), strides=(1, 2, 2, 1),
-                    padding='SAME')
+        # block3 : [batch, 64, 64, 128] => [batch, 32, 32, 256]  
+        conv3_1_relu=conv(pool2,256)
+        conv3_2_relu=conv(conv3_1_relu,256)
+        conv3_3_relu=conv(conv3_2_relu,256)
+        pool3=pool(conv3_3_relu)
 
-        def feed_forward(self, input_image, scope=None):
+        # block4 : [batch, 32, 32, 256] => [batch, 16, 16, 512]    
+        conv4_1_relu=conv(pool3,512)
+        conv4_2_relu=conv(conv4_1_relu,512)
+        conv4_3_relu=conv(conv4_2_relu,512)
+        pool4=pool(conv4_3_relu)
 
-            for i, name in enumerate(self.layers):
-                kind, layer_n = name[:4], name[4]
-                with tf.variable_scope("DN_layer_%d" %(layer_n)):
-                    if kind == 'conv':
-                        # kernels = self.weights[i][0][0][2][0][0]
-                        # bias = self.weights[i][0][0][2][0][1]
-                        # tensorflow: weights are [height, width, in_channels, out_channels]
-                        kernels = np.transpose(kernels, (1, 0, 2, 3))
-                        bias = bias.reshape(-1)
-                        # current = _conv_layer(current, kernels, bias)
-                        current = conv(current, )
-                    elif kind == 'relu':
-                        current = tf.nn.relu(current)
-                    elif kind == 'pool':
-                        current = _pool_layer(current)
-                    net[name] = current
+        #block5 : [batch, 16, 16, 512] => [batch, 8, 8, 512]   
+        conv5_1_relu=conv(pool4,512)
+        conv5_2_relu=conv(conv5_1_relu,512)
+        conv5_3_relu=conv(conv5_2_relu,512)
+        pool5=pool(conv5_3_relu)
 
-            assert len(net) == len(self.layers)
-            return net
+     #    #block6 :FC layers
+    	# fc1=FC_layer(pool5,4096)
+    	# fc2=FC_layer(fc1,4096)
+    	# fc3=FC_layer(fc2,1000)
+            
+    	# def FC_layer(input,out_channels):
+    	# 	if len(input.get_shape)==4:			
+    	#     	shape=int(np.prod(input.get_shape()[1:]))
+    	#     else:
+    	#     	shape=int(np.prod(input.get_shape()[-1]))
+    	#     weight=tf.Variable(tf.truncated_normal([shape,out_channels],dtype=tf.float32,stddev=1e-1))
+    	#     bias=tf.Variable(tf.constant(1.0,shape=[out_channels],dtype=tf.float32))
+    	#     flat=tf.reshape(input,[-1,shape])
+    	#     fc=tf.nn.bias_add(tf.matmul(flat,weight),bias)
+    	#     fc=tf.nn.relu(fc)   
+    	#     return fc
 
-        # FC layer
-        with tf.variable_scope("FC"):
-            fc6 = fc_layer(dn_layer[-1])
+    	result= tf.sigmoid(pool5)
+    	return result
 
+    	def kernel_init(in_channels,out_channels):
+    		weights=tf.Variable(tf.truncated_normal([3,3,in_channels,out_channels],dtype=tf.float32,stddev=1e-1))
+    		biases=tf.Variable(tf.constant(0.0,shape=[out_channels],dtype=tf.float32))
+    		return weights,biases
 
-        # # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
-        # input = tf.concat([discrim_inputs, discrim_targets], axis=3)
-        #
-        # # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
-        # with tf.variable_scope("layer_1"):
-        #     convolved = conv(input, a.ndf, stride=2)
-        #     rectified = relu(convolved, 0.2)
-        #     layers.append(rectified)
-        #
-        # # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
-        # # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
-        # # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-        # for i in range(n_layers):
-        #     with tf.variable_scope("layer_%d" % (len(layers) + 1)):
-        #         out_channels = a.ndf * min(2**(i+1), 8)
-        #         stride = 1 if i == n_layers - 1 else 2  # last layer here has stride 1
-        #         convolved = conv(layers[-1], out_channels, stride=stride)
-        #         normalized = batchnorm(convolved)
-        #         rectified = lrelu(normalized, 0.2)
-        #         layers.append(rectified)
-        #
-        # # layer_5: [batch, 31, 31, ndf * 8] => [batch, 30, 30, 1]
-        # with tf.variable_scope("layer_%d" % (len(layers) + 1)):
-        #     convolved = conv(rectified, out_channels=1, stride=1)
-        #     output = tf.sigmoid(convolved)
-        #     layers.append(output)
-        # return layers[-1]
+    	def conv(net,out_channels,relu=True):
+    		in_channels=net.get_shape()[3]
+    		weights,biases=kernel_init(in_channels,out_channels)
+    	    conv=tf.nn.conv2d(net,weights,[1,1,1,1], padding="SAME")
+    	    conv=tf.nn.bias_add(conv,biases)	   
+    	    if relu:
+    	        conv=tf.nn.relu(namedtuple)   
+    	    return conv   
+
+    	def pool(net):
+            return tf.nn.max_pool(net,ksize=[1,2,2,1],strides=[1,2,2,1],padding="SAME")
 
 
     with tf.variable_scope("generator") as scope:
