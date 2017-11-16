@@ -78,82 +78,43 @@ def augment(image, brightness):
     return rgb
 
 ###
+def conv(batch_input, out_channels, stride=1, filter_size=3):
+    with tf.variable_scope("conv"):
+        in_channels = batch_input.get_shape()[3]
+        filter = tf.get_variable("filter", [filter_size, filter_size, in_channels, out_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
+        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
+        conv = tf.nn.conv2d(padded_input, filter, [1, stride, stride, 1], padding="VALID")
+        return conv
 
-def conv_init_vars(net, out_channels, filter_size, transpose=False):
-    '''
-    According to the previous output, intialize the weight matrix.
-    '''
-    _, rows, cols, in_channels = [i.value for i in net.get_shape()] ### Obtain in_channels
+def deconv(batch_input, out_channels=256, stride=2, filter_size=4):
+    with tf.variable_scope("deconv"):
+        batch,height, width, in_channels = batch_input.get_shape().as_list()
+        filter = tf.get_variable("filter", [filter_size, filter_size, in_channels, out_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
+        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
+        deconv = tf.nn.conv2d_transpose(padded_input, filter, [batch, height*2, width*2, out_channels], [1, stride, stride, 1], padding="VALID")
+        return deconv
 
-    if not transpose:
-        weights_shape = [filter_size, filter_size, in_channels, out_channels]
-    else:
-        weights_shape = [filter_size, filter_size, out_channels, in_channels]
+# def lrelu(x, a):
+#     with tf.name_scope("lrelu"):
+#         # leak: a*x/2 - a*abs(x)/2, linear: x/2 + abs(x)/2
+#         x = tf.identity(x)
+#         return (0.5 * (1 + a)) * x + (0.5 * (1 - a)) * tf.abs(x)
 
-    # weights shape = [Kernal size, kernal size, output kernal, input kernal]
+def relu(x):
+    with tf.name_scope("relu"):
+        return tf.nn.relu(x)
 
-    weights_init = tf.Variable(tf.truncated_normal(weights_shape, stddev = 0.1, seed=1), dtype=tf.float32)
-    return weights_init
-
-
-def batch_norm(net, train=True):
-    '''
-    Apply Batch Normalization Function
-    BN: Forward norm and then inverse norm.
-    formula: y = scale*[(x-mu)/sqrt(variance+epsilon)]+shift
-    '''
-
-    batch, rows, cols, channels = [i.value for i in net.get_shape()] ### Shape Meaning: [batchsize, height, width, kernels]
-    var_shape = [channels]
-    mu, sigma_sq = tf.nn.moments(net, [1,2], keep_dims=True) ### Calculate the mean and variance of x.Output: One-dimension
-    shift = tf.Variable(tf.zeros(var_shape)) ### Inverse Norm
-    scale = tf.Variable(tf.ones(var_shape)) ### Inverse Norm
-    epsilon = 1e-3
-    normalized = (net-mu)/(sigma_sq + epsilon)**(.5)
-    return scale * normalized + shift ### Applied Batch Normalization
-
-
-def conv_layer(net, num_filters, filter_size, strides, relu=True):
-    '''
-    Apply convolution operation (with relu)
-    '''
-    weights_init = conv_init_vars(net, num_filters, filter_size)
-    strides_shape = [1, strides, strides, 1]
-    net = tf.nn.conv2d(net, weights_init, strides_shape, padding='SAME')
-
-    if relu:
-        net = tf.nn.relu(net)
-    return net
-
-def conv_layer_dila(net, num_filters, filter_size, rate, relu=True):
-    '''
-    Apply dilation convolution operation (with relu)
-    在己有像素上，skip一些pixel/input unchange; 對conv的kernel參數中插一些0的weight => 空間範圍變大
-    '''
-    weights_init = conv_init_vars(net, num_filters, filter_size)
-    #strides_shape = [1, strides, strides, 1]
-    net = tf.nn.atrous_conv2d(net, weights_init, rate, 'SAME') # Dialation Convolution
-
-    if relu:
-        net = tf.nn.relu(net)
-    return net
-
-def conv_tranpose_layer(net, num_filters, filter_size, strides):
-    '''
-    Inverse of convolution operation
-    '''
-    weights_init = conv_init_vars(net, num_filters, filter_size, transpose=True)
-
-    batch_size, rows, cols, in_channels = [i.value for i in net.get_shape()]
-    new_rows, new_cols = int(rows * strides), int(cols * strides)
-    # new_shape = #tf.pack([tf.shape(net)[0], new_rows, new_cols, num_filters])
-    new_shape = [batch_size, new_rows, new_cols, num_filters]
-    tf_shape = tf.stack(new_shape)
-    strides_shape = [1,strides,strides,1]
-    net = tf.nn.conv2d_transpose(net, weights_init, tf_shape, strides_shape, padding='SAME')
-
-    return tf.nn.relu(net)
-
+def batchnorm(input):
+    with tf.variable_scope("batchnorm"):
+        # this block looks like it has 3 inputs on the graph unless we do this
+        input = tf.identity(input)
+        channels = input.get_shape()[3]
+        offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
+        scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02))
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)  # calc mean,variance along axes
+        variance_epsilon = 1e-5
+        normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
+        return normalized
 
 def rgb_to_lab(srgb):
     with tf.name_scope("rgb_to_lab"):
@@ -302,81 +263,63 @@ def load_examples():
     )
 
 ###
+def create_generator(generator_inputs, generator_outputs_channels):
+    layers = []
 
-def net(image):  ### 输入的图像不用normalization
-    normalization = batch_norm(image, train=True)
-    conv1_1_relu = conv_layer(normalization, 64, 3, 1, relu=True)
-    conv1_2_relu = conv_layer(conv1_1_relu, 64, 3, 1, relu=True)
-    conv1_2norm = batch_norm(conv1_2_relu, train=True)
-    '''
-    > conv2_1 > relu2_1 > conv2_2 (Stride:2) > relu2_2 > conv2_2norm
-    '''
-    conv2_1_relu = conv_layer(conv1_2norm, 128, 3, 1, relu=True)
-    conv2_2_relu = conv_layer(conv1_1_relu, 128, 3, 2, relu=True)
-    conv2_2norm = batch_norm(conv2_2_relu, train=True)
+    layer_specs = [
+        512, # encoder_4: [batch, 32, 32, 256] => [batch, 32, 32, 512]
+        512, # encoder_5: [batch, 32, 32, 512] => [batch, 32, 32, 512]
+        512, # encoder_6: [batch, 32, 32, 512] => [batch, 32, 32, 512]
+        512, # encoder_7: [batch, 32, 32, 512] => [batch, 32, 32, 512]
+    ]
 
-    '''
-    > conv3_1 > relu3_1 > conv3_2 > relu3_2 > conv3_3 (Stride:2)> relu3_3 > conv3_3norm
-    '''
+    with tf.variable_scope("encoder_1"):
+        conv1 = conv(generator_inputs, 64)
+        rect1 = relu(conv1)
+        conv2 = conv(rect1, 128, stride=2)
+        rect2 = relu(conv2)
+        output = batchnorm(rect2)
+        layers.append(output)
 
-    conv3_1_relu = conv_layer(conv2_2norm, 256, 3, 1, relu=True)
-    conv3_2_relu = conv_layer(conv3_1_relu, 256, 3, 1, relu=True)
-    conv3_3_relu = conv_layer(conv3_2_relu, 256, 3, 2, relu=True)
-    conv3_3norm = batch_norm(conv3_3_relu, train=True)
-    '''
-    conv4_1 (Stride:1,pad:1 dilation: 1)> relu4_1 > conv4_2(same) > relu4_2 > conv4_3(same) > relu4_3 > conv4_3_norm
-    tf.nn.atrous_conv2d(net, weights_init, rate, 'SAME')
-    conv_layer_dila(net, num_filters, filter_size, rate, relu=True)
-    '''
-    conv4_1_relu = conv_layer(conv3_3norm, 512, 3, 2, relu=True)
-    conv4_2_relu = conv_layer_dila(conv4_1_relu, 512, 3, 1, relu=True)
-    conv4_3_relu = conv_layer_dila(conv4_2_relu, 512, 3, 1, relu=True)
-    conv4_3norm = batch_norm(conv4_3_relu, train=True)
+    with tf.variable_scope("encoder_2"):
+        conv1 = conv(layers[-1], 128)
+        rect1 = relu(conv1)
+        conv2 = conv(rect1, 256, stride=2)
+        rect2 = relu(conv2)
+        output = batchnorm(rect2)
+        layers.append(output)
 
-    '''
-    conv5_1(Stride:1,pad:2 dilation: 2) > relu5_1 > conv5_2(same) > relu5_2 > conv5_3 > relu5_3 > conv5_3_norm
-    '''
+    with tf.variable_scope("encoder_3"):
+        conv1 = conv(layers[-1], 256)
+        rect1 = relu(conv1)
+        conv2 = conv(rect1, 256)
+        rect2 = relu(conv2)
+        conv3 = conv(rect2, 512, stride=2)
+        rect3 = relu(conv3)
+        output = batchnorm(rect3)
+        layers.append(output)
 
-    conv5_1_relu = conv_layer_dila(conv4_3norm, 512, 3, 2, relu=True)
-    conv5_2_relu = conv_layer_dila(conv5_1_relu, 512, 3, 2, relu=True)
-    conv5_3_relu = conv_layer_dila(conv5_2_relu, 512, 3, 2, relu=True)
-    conv5_3norm = batch_norm(conv5_3_relu, train=True)
+    for out_channels in layer_specs:
+        with tf.variable_scope("encoder_%d" % (len(layers) + 3)):
+            conv1 = conv(layers[-1], out_channels)
+            rect1 = relu(conv1)
+            conv2 = conv(rect1, out_channels)
+            rect2 = relu(conv2)
+            conv3 = conv(rect2, out_channels)
+            rect3 = relu(conv3)
+            output = batchnorm(conv3)
+            layers.append(output)
 
-    '''
-    conv6_1 (Stride:1,pad:2 dilation: 2)> relu6_1 > conv6_2(same) > relu6_2 > conv6_3(same) > relu6_3 > conv6_3_norm
-    '''
+    with tf.variable_scope("encoder_8"):
+        conv1 = deconv(layers[-1])
+        rect1 = relu(conv1)
+        conv2 = conv(rect1, 256)
+        rect2 = relu(conv2)
+        conv3 = conv(rect2, 256)
+        rect3 = relu(conv3)
+        layers.append(rect3)
 
-    conv6_1_relu = conv_layer_dila(conv5_3norm, 512, 3, 2, relu=True)
-    conv6_2_relu = conv_layer_dila(conv6_1_relu, 512, 3, 2, relu=True)
-    conv6_3_relu = conv_layer_dila(conv6_2_relu, 512, 3, 2, relu=True)
-    conv6_3norm = batch_norm(conv6_3_relu, train=True)
-
-    '''
-    conv7_1(Stride:1,pad:1 dilation: 1) > relu7_1 > conv7_2 > relu7_2 > conv7_3 > relu7_3 > conv7_3_norm
-    '''
-
-    conv7_1_relu = conv_layer_dila(conv6_3norm, 512, 3, 1, relu=True)
-    conv7_2_relu = conv_layer_dila(conv7_1_relu, 512, 3, 1, relu=True)
-    conv7_3_relu = conv_layer_dila(conv7_2_relu, 512, 3, 1, relu=True)
-    conv7_3norm = batch_norm(conv7_3_relu, train=True)
-
-    '''
-    conv8_1(256, kernal:4 stride:2 pad:1 dilation:1) > relu8_1 > conv8_2(kernal:3 stride:1) > relu8_2 > conv8_3
-    '''
-    conv8_1_relu = conv_tranpose_layer(conv7_3norm, 256, 4, 2)
-    conv8_2_relu = conv_layer(conv8_1_relu, 256, 3, 1, relu=True)
-    conv8_3_relu = conv_layer(conv8_2_relu, 256, 3, 1, relu=True)
-
-    return conv8_3_relu
-
-def ab2lab(image):
-    # scale by 2.606: reheat the output distribution
-    conv8_313_rh = tf.scalar_mul(2.606, image)
-
-    # convert softmax to probab distribution
-    class8_313_rh = tf.nn.softmax(conv8_313_rh)
-
-    # 
+    return layers[-1]
 
 ###
 def create_model(inputs, targets):
@@ -427,12 +370,12 @@ def create_model(inputs, targets):
 
             assert len(net) == len(self.layers)
             return net
-
+        
         # FC layer
         with tf.variable_scope("FC"):
             fc6 = fc_layer(dn_layer[-1])
-
-
+            
+            
         # # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
         # input = tf.concat([discrim_inputs, discrim_targets], axis=3)
         #

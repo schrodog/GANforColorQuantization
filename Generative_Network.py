@@ -17,7 +17,7 @@ conv6_1 (Stride:1,pad:2 dilation: 2)> relu6_1 > conv6_2(same) > relu6_2 > conv6_
 ===
 conv7_1(Stride:1,pad:1 dilation: 1) > relu7_1 > conv7_2 > relu7_2 > conv7_3 > relu7_3 > conv7_3_norm
 ===
-conv8_1(kernal:4 stride:2 pad:1 dilation:1) > relu8_1 > conv8_2(kernal:3 stride:1) > relu8_2 > conv8_3 > relu8_3 
+conv8_1(kernal:4 stride:2 pad:1 dilation:1) > relu8_1 > conv8_2(kernal:3 stride:1) > relu8_2 > conv8_3 > relu8_3
 
 Testing Result：
 (1) s>1，即卷积的同时做了downsampling，卷积后图像尺寸减小；
@@ -97,12 +97,12 @@ def conv_init_vars(net, out_channels, filter_size, transpose=False):
     According to the previous output, intialize the weight matrix.
     '''
     _, rows, cols, in_channels = [i.value for i in net.get_shape()] ### Obtain in_channels
-    
+
     if not transpose:
         weights_shape = [filter_size, filter_size, in_channels, out_channels]
     else:
         weights_shape = [filter_size, filter_size, out_channels, in_channels]
-    
+
     # weights shape = [Kernal size, kernal size, output kernal, input kernal]
 
     weights_init = tf.Variable(tf.truncated_normal(weights_shape, stddev = 0.1, seed=1), dtype=tf.float32)
@@ -115,7 +115,7 @@ def batch_norm(net, train=True):
     BN: Forward norm and then inverse norm.
     formula: y = scale*[(x-mu)/sqrt(variance+epsilon)]+shift
     '''
-    
+
     batch, rows, cols, channels = [i.value for i in net.get_shape()] ### Shape Meaning: [batchsize, height, width, kernels]
     var_shape = [channels]
     mu, sigma_sq = tf.nn.moments(net, [1,2], keep_dims=True) ### Calculate the mean and variance of x.Output: One-dimension
@@ -131,12 +131,12 @@ def conv_layer(net, num_filters, filter_size, strides, relu=True):
     Apply convolution operation (with relu)
     '''
     weights_init = conv_init_vars(net, num_filters, filter_size)
-    strides_shape = [1, strides, strides, 1]                
+    strides_shape = [1, strides, strides, 1]
     net = tf.nn.conv2d(net, weights_init, strides_shape, padding='SAME')
-    
+
     if relu:
-        net = tf.nn.relu(net)   
-    return net        
+        net = tf.nn.relu(net)
+    return net
 
 def conv_layer_dila(net, num_filters, filter_size, rate, relu=True):
     '''
@@ -146,10 +146,10 @@ def conv_layer_dila(net, num_filters, filter_size, rate, relu=True):
     weights_init = conv_init_vars(net, num_filters, filter_size)
     #strides_shape = [1, strides, strides, 1]
     net = tf.nn.atrous_conv2d(net, weights_init, rate, 'SAME') # Dialation Convolution
-    
+
     if relu:
-        net = tf.nn.relu(net)   
-    return net   
+        net = tf.nn.relu(net)
+    return net
 
 def conv_tranpose_layer(net, num_filters, filter_size, strides):
     '''
@@ -160,9 +160,10 @@ def conv_tranpose_layer(net, num_filters, filter_size, strides):
     batch_size, rows, cols, in_channels = [i.value for i in net.get_shape()]
     new_rows, new_cols = int(rows * strides), int(cols * strides)
     # new_shape = #tf.pack([tf.shape(net)[0], new_rows, new_cols, num_filters])
-    new_shape = [batch_size, new_rows, new_cols, num_filters]  
-    tf_shape = tf.stack(new_shape)   
+    new_shape = [batch_size, new_rows, new_cols, num_filters]
+    tf_shape = tf.stack(new_shape)
     strides_shape = [1,strides,strides,1]
     net = tf.nn.conv2d_transpose(net, weights_init, tf_shape, strides_shape, padding='SAME')
-return tf.nn.relu(net)
+
+    return tf.nn.relu(net)
 
